@@ -570,9 +570,7 @@ async function rateTeam(){
   out.innerHTML='<div class="loading">Claude is rating your 15</div>';
   const prompt=`You are an elite FPL analyst rating a squad for 2026/27.\n\n${SEASON_CONTEXT}\n\nUser squad JSON (with model xP): ${JSON.stringify(squadJSON())}\nTotal £${cost().toFixed(1)}m of £100.0m.\n\nRespond ONLY with raw JSON, no fences, exactly:\n{"score":<0-100>,"verdict":"<one punchy sentence>","subs":{"Value":<0-100>,"Fixtures":<0-100>,"Captaincy":<0-100>,"Structure":<0-100>,"Ceiling":<0-100>},"strengths":["..","..",".."],"risks":["..","..",".."],"moves":[{"out":"<exact squad name>","in":"<player name>","why":".."}]}\nBe decisive, honest, reference the model xP numbers and fixtures. Max 3 moves.`;
   try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,messages:[{role:'user',content:prompt}]})});
-    const data=await r.json();
+    const data=await aiFetch({model:'claude-sonnet-4-6',max_tokens:1000,messages:[{role:'user',content:prompt}]});
     const text=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
     renderRating(JSON.parse(text.replace(/```json|```/g,'').trim()));
   }catch(e){out.innerHTML='<div class="cardsec"><h4 class="r">Rating failed</h4><li>Could not reach the AI. Try again.</li></div>';}
@@ -612,9 +610,23 @@ function applyMove(outName,inName){
 
 // ---------- LIVE REFRESH ----------
 async function fetchJSON(url){
-  const routes=[url,'https://corsproxy.io/?url='+encodeURIComponent(url),'https://api.allorigins.win/raw?url='+encodeURIComponent(url)];
+  const routes=['/api/fpl?url='+encodeURIComponent(url),url,
+    'https://corsproxy.io/?url='+encodeURIComponent(url),
+    'https://api.allorigins.win/raw?url='+encodeURIComponent(url)];
   for(const r of routes){try{const res=await fetch(r,{cache:'no-store'});if(res.ok)return await res.json();}catch(e){}}
   throw new Error('blocked');
+}
+async function aiFetch(body){
+  try{
+    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(r.ok)return await r.json();
+    throw new Error('direct failed');
+  }catch(e){
+    const r2=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!r2.ok)throw new Error('ai proxy failed');
+    return await r2.json();
+  }
 }
 async function refreshData(){
   const btn=document.getElementById('refBtn');
@@ -664,11 +676,9 @@ async function sendChat(){
   const sys=`You are a sharp, decisive FPL assistant inside a squad-builder app with a quantitative model. Answer concisely (under 150 words unless asked). Give a recommendation, not a survey. Use web search for current news.\n\n${SEASON_CONTEXT}\n\nUser's squad (with model xP): ${JSON.stringify(squadJSON())} — total £${cost().toFixed(1)}m.`;
   history.push({role:'user',content:q});
   try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,
+    const data=await aiFetch({model:'claude-sonnet-4-6',max_tokens:1000,
         messages:[{role:'user',content:sys+'\n\nConversation so far:\n'+history.map(h=>(h.role==='user'?'User: ':'Assistant: ')+h.content).join('\n')}],
-        tools:[{type:'web_search_20250305',name:'web_search'}]})});
-    const data=await r.json();
+        tools:[{type:'web_search_20250305',name:'web_search'}]});
     const text=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim();
     think.innerHTML=fmt(text||'No answer returned — try again.');
     history.push({role:'assistant',content:text});
